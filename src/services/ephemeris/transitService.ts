@@ -1,8 +1,58 @@
+import sweph from "sweph";
 import { v4 as uuidv4 } from "uuid";
 import { Planet, Aspect, Transit } from "../../models/types";
-import { getPlanetPosition } from "./ephemerisService";
+import path from "path";
 
-// Define aspect angles
+// Type definitions for transit descriptions
+interface PlanetDynamics {
+  [key: string]: string; // Planet name as key, description string as value
+}
+
+interface AspectDescription {
+  base: string;
+  dynamics?: {
+    [key: string]: PlanetDynamics; // Planet name as key, object with planet descriptions as value
+  };
+}
+
+interface AspectDescriptions {
+  [key: string]: AspectDescription; // Aspect name as key, aspect description as value
+}
+
+// Initialize Swiss Ephemeris
+const ephemerisPath = path.join(__dirname, "../../../ephemeris-data");
+sweph.set_ephe_path(ephemerisPath);
+
+// Map planets to Swiss Ephemeris planet IDs
+const PLANET_MAP = {
+  [Planet.SUN]: 0, // SE_SUN
+  [Planet.MOON]: 1, // SE_MOON
+  [Planet.MERCURY]: 2, // SE_MERCURY
+  [Planet.VENUS]: 3, // SE_VENUS
+  [Planet.MARS]: 4, // SE_MARS
+  [Planet.JUPITER]: 5, // SE_JUPITER
+  [Planet.SATURN]: 6, // SE_SATURN
+  [Planet.URANUS]: 7, // SE_URANUS
+  [Planet.NEPTUNE]: 8, // SE_NEPTUNE
+  [Planet.PLUTO]: 9, // SE_PLUTO
+};
+
+// Gregorian flag for Julian day conversion
+const GREG_FLAG = 1;
+
+// SEFLG_SWIEPH = 2 (Swiss Ephemeris flag)
+const CALC_FLAG = 2 | 256; // Added SEFLG_SPEED flag to get planet speed
+
+// Aspect orbs (in degrees)
+const ASPECT_ORBS = {
+  [Aspect.CONJUNCTION]: 8,
+  [Aspect.SEXTILE]: 4,
+  [Aspect.SQUARE]: 7,
+  [Aspect.TRINE]: 7,
+  [Aspect.OPPOSITION]: 8,
+};
+
+// Aspect angles
 const ASPECT_ANGLES = {
   [Aspect.CONJUNCTION]: 0,
   [Aspect.SEXTILE]: 60,
@@ -12,173 +62,407 @@ const ASPECT_ANGLES = {
 };
 
 /**
- * Check if two planetary positions form an aspect
+ * Get planet position at a specific date
  */
-export function checkAspect(
-  pos1: number,
-  pos2: number,
-  aspect: Aspect,
-  orb: number = 2
-): boolean {
-  const targetAngle = ASPECT_ANGLES[aspect];
-  const angleDiff = Math.abs(((pos1 - pos2 + 180) % 360) - 180);
-  return Math.abs(angleDiff - targetAngle) <= orb;
+function getPlanetPositionAtDate(
+  planet: Planet,
+  date: Date
+): { longitude: number; speed: number } {
+  // Convert date to Julian day
+  const julianDay = sweph.julday(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours() + date.getMinutes() / 60,
+    GREG_FLAG
+  );
+
+  // Get planet ID
+  const planetId = PLANET_MAP[planet];
+
+  // Calculate planet position with speed
+  try {
+    const result = sweph.calc_ut(julianDay, planetId, CALC_FLAG);
+
+    // Validate result
+    if (!result || typeof result !== "object" || !result.data) {
+      throw new Error(`Invalid result from sweph.calc_ut for planet ${planet}`);
+    }
+
+    // Extract longitude and speed
+    const [longitude, , , speedLong] = result.data;
+
+    return {
+      longitude: longitude % 360, // Normalize to 0-360
+      speed: speedLong,
+    };
+  } catch (error) {
+    console.error(`Error calculating position for ${planet}:`, error);
+    throw error;
+  }
 }
 
 /**
- * Generate a description for a transit
+ * Check if two planets form an aspect
+ */
+export function checkAspect(
+  longitudeA: number,
+  longitudeB: number,
+  aspect: Aspect
+): boolean {
+  const targetAngle = ASPECT_ANGLES[aspect];
+  const orb = ASPECT_ORBS[aspect];
+
+  // Calculate the angle difference between planets
+  // First normalize longitudes to 0-360 range
+  const normLongA = longitudeA % 360;
+  const normLongB = longitudeB % 360;
+
+  // Calculate absolute difference
+  let diff = Math.abs(normLongA - normLongB);
+
+  // Handle the case where planets are close, but across the 0°/360° boundary
+  // For example, if one planet is at 355° and another at 5°, the real difference is 10°, not 350°
+  if (diff > 180) {
+    diff = 360 - diff;
+  }
+
+  // Check if it's within the orb
+  return Math.abs(diff - targetAngle) <= orb;
+}
+
+/**
+ * Get the exact date when an aspect is formed
+ */
+function findExactAspectDate(
+  planetA: Planet,
+  planetB: Planet,
+  aspect: Aspect,
+  startDate: Date,
+  endDate: Date,
+  steps: number = 20
+): Date | null {
+  const targetAngle = ASPECT_ANGLES[aspect];
+  const timeRange = endDate.getTime() - startDate.getTime();
+  const timeStep = timeRange / steps;
+
+  let closestDate = startDate;
+  let closestDifference = 360;
+
+  // Iterate through the date range to find the closest match
+  for (let i = 0; i <= steps; i++) {
+    const currentTime = startDate.getTime() + i * timeStep;
+    const currentDate = new Date(currentTime);
+
+    const posA = getPlanetPositionAtDate(planetA, currentDate);
+    const posB = getPlanetPositionAtDate(planetB, currentDate);
+
+    // Calculate angle difference
+    let diff = Math.abs(posA.longitude - posB.longitude) % 360;
+    if (diff > 180) diff = 360 - diff;
+
+    const difference = Math.abs(diff - targetAngle);
+
+    if (difference < closestDifference) {
+      closestDifference = difference;
+      closestDate = currentDate;
+    }
+
+    // If we're very close, we can stop
+    if (difference < 0.1) break;
+  }
+
+  // If we're still not close enough, return null
+  if (closestDifference > 1.0) return null;
+
+  return closestDate;
+}
+
+/**
+ * Generate description for a transit
  */
 export function generateTransitDescription(
   planetA: Planet,
   aspect: Aspect,
   planetB: Planet
 ): string {
-  // Simple descriptions - would be more detailed in a full implementation
-  const templates = {
-    [Aspect.CONJUNCTION]: `${planetA} conjunct ${planetB} brings a fusion of energies. This is a time when these planetary influences blend together, creating new beginnings and emphases in areas related to both planets.`,
-    [Aspect.SQUARE]: `${planetA} square ${planetB} creates tension and challenges. This aspect represents friction between these planetary energies, which can generate stress but also motivate growth and change.`,
-    [Aspect.TRINE]: `${planetA} trine ${planetB} forms a harmonious flow. This supportive aspect brings ease and natural opportunities between these planetary energies.`,
-    [Aspect.OPPOSITION]: `${planetA} opposite ${planetB} creates polarization. This aspect brings awareness through contrast and can represent a need to balance these different planetary energies.`,
-    [Aspect.SEXTILE]: `${planetA} sextile ${planetB} presents positive opportunities. This aspect offers supportive energy that requires some initiative to fully utilize.`,
+  const descriptions: AspectDescriptions = {
+    [Aspect.CONJUNCTION]: {
+      base: "%A and %B merge their energies, creating a powerful new beginning or emphasis in your life.",
+      dynamics: {
+        [Planet.SUN]: {
+          [Planet.MOON]:
+            "Your conscious will and emotional needs align, enabling authenticity and clear self-expression.",
+          [Planet.MERCURY]:
+            "Your sense of identity merges with communication, enhancing your ability to express yourself.",
+          [Planet.VENUS]:
+            "Your identity aligns with your desires and values, heightening creativity and personal charm.",
+          [Planet.MARS]:
+            "Your will and drive unite, providing a powerful boost to pursue your goals with vigor.",
+          [Planet.JUPITER]:
+            "Your identity expands through greater confidence, optimism, and opportunity for growth.",
+          [Planet.SATURN]:
+            "Your identity meets responsibility, bringing focus to personal achievement through discipline.",
+          [Planet.URANUS]:
+            "Your identity seeks freedom and awakening, potentially bringing unexpected changes to your path.",
+          [Planet.NEPTUNE]:
+            "Your identity blends with spiritual energy, enhancing imagination and compassion.",
+          [Planet.PLUTO]:
+            "Your identity undergoes powerful transformation, revealing deeper truths about yourself.",
+        },
+        // Add more specific descriptions here
+      },
+    },
+    [Aspect.SEXTILE]: {
+      base: "%A forms a harmonious opportunity with %B, offering a chance for growth if you take action.",
+    },
+    [Aspect.SQUARE]: {
+      base: "%A creates tension with %B, challenging you to overcome obstacles and grow through difficulty.",
+    },
+    [Aspect.TRINE]: {
+      base: "%A flows effortlessly with %B, offering natural talents and opportunities for easy progress.",
+    },
+    [Aspect.OPPOSITION]: {
+      base: "%A faces %B directly, creating awareness through polarization and the need for balance.",
+    },
   };
 
-  return (
-    templates[aspect] ||
-    `${planetA} ${aspect} ${planetB}: The qualities of these planets interact in ways that affect your life and consciousness.`
-  );
-}
+  // Get the aspect description template
+  let description = descriptions[aspect].base;
 
-/**
- * Get sample transits for a specific date
- * This is a simplified implementation - a real one would search across date ranges
- */
-export function getSampleTransits(date: Date, orb: number = 2): Transit[] {
-  const transits: Transit[] = [];
-  const planets = Object.values(Planet);
-  const aspects = Object.values(Aspect);
-
-  // Just check for aspects between planets on this specific date
-  for (let i = 0; i < planets.length; i++) {
-    for (let j = i + 1; j < planets.length; j++) {
-      const planetA = planets[i];
-      const planetB = planets[j];
-
-      const posA = getPlanetPosition(planetA, date);
-      const posB = getPlanetPosition(planetB, date);
-
-      for (const aspect of aspects) {
-        if (checkAspect(posA.longitude, posB.longitude, aspect, orb)) {
-          // For simplicity, use same date for start/exact/end
-          // In a real implementation, you'd calculate these precisely
-          transits.push({
-            id: uuidv4(),
-            planetA,
-            planetB,
-            aspect,
-            exactDate: new Date(date),
-            startDate: new Date(date.getTime() - 3 * 24 * 60 * 60 * 1000), // 3 days before
-            endDate: new Date(date.getTime() + 3 * 24 * 60 * 60 * 1000), // 3 days after
-            description: generateTransitDescription(planetA, aspect, planetB),
-          });
-        }
-      }
-    }
+  // Check if there's a specific description for this planet combination
+  if (
+    descriptions[aspect].dynamics &&
+    descriptions[aspect].dynamics[planetA] &&
+    descriptions[aspect].dynamics[planetA][planetB]
+  ) {
+    description += " " + descriptions[aspect].dynamics[planetA][planetB];
+  } else if (
+    descriptions[aspect].dynamics &&
+    descriptions[aspect].dynamics[planetB] &&
+    descriptions[aspect].dynamics[planetB][planetA]
+  ) {
+    // Try the reverse combination
+    description += " " + descriptions[aspect].dynamics[planetB][planetA];
   }
 
-  return transits;
+  // Replace placeholder text with actual planet names
+  return description.replace(/%A/g, planetA).replace(/%B/g, planetB);
 }
 
 /**
- * Calculate transits for a date range - more advanced implementation
- * This is pseudocode for a more complete implementation
+ * Find transits within a given date range
  */
 export function findTransitsInRange(
   startDate: Date,
   endDate: Date,
-  orb: number = 2
+  filteredPlanets?: Planet[]
 ): Transit[] {
-  // Real implementation would be much more complex
-  // For now, just return sample transits from the midpoint of the range
-  const midpointTime = (startDate.getTime() + endDate.getTime()) / 2;
-  const midpointDate = new Date(midpointTime);
+  const transits: Transit[] = [];
 
-  return getSampleTransits(midpointDate, orb);
-
-  /* Full implementation would be something like:
-  
-  const transits = [];
-  const planets = Object.values(Planet);
+  // Get all planets or use filtered list
+  const planets = filteredPlanets || Object.values(Planet);
   const aspects = Object.values(Aspect);
-  
-  // Create a series of sample points within the date range
-  const samplePoints = [];
-  const dayInMs = 24 * 60 * 60 * 1000;
-  for (let time = startDate.getTime(); time <= endDate.getTime(); time += dayInMs) {
-    samplePoints.push(new Date(time));
-  }
-  
-  // For each planet pair and aspect
+
+  // Iterate through every planet combination
   for (let i = 0; i < planets.length; i++) {
     for (let j = i + 1; j < planets.length; j++) {
       const planetA = planets[i];
       const planetB = planets[j];
-      
+
+      // Check each aspect
       for (const aspect of aspects) {
-        let inAspect = false;
-        let aspectStartDate = null;
-        
-        // Check each sample point
-        for (let k = 0; k < samplePoints.length; k++) {
-          const date = samplePoints[k];
-          const posA = getPlanetPosition(planetA, date);
-          const posB = getPlanetPosition(planetB, date);
-          
-          const hasAspect = checkAspect(posA.longitude, posB.longitude, aspect, orb);
-          
-          if (hasAspect && !inAspect) {
-            // Entering aspect
-            inAspect = true;
-            aspectStartDate = date;
-          } else if (!hasAspect && inAspect && aspectStartDate) {
-            // Leaving aspect, create transit
-            inAspect = false;
-            
-            // Find exact date
-            const exactDate = findExactAspectDate(planetA, planetB, aspect, aspectStartDate, date);
-            
+        // Check if aspect exists at start and end of period
+        const startPositionA = getPlanetPositionAtDate(planetA, startDate);
+        const startPositionB = getPlanetPositionAtDate(planetB, startDate);
+        const endPositionA = getPlanetPositionAtDate(planetA, endDate);
+        const endPositionB = getPlanetPositionAtDate(planetB, endDate);
+
+        const aspectAtStart = checkAspect(
+          startPositionA.longitude,
+          startPositionB.longitude,
+          aspect
+        );
+        const aspectAtEnd = checkAspect(
+          endPositionA.longitude,
+          endPositionB.longitude,
+          aspect
+        );
+
+        // If aspect forms or dissolves during this period
+        if (aspectAtStart !== aspectAtEnd) {
+          // Find exact aspect date
+          const exactDate = findExactAspectDate(
+            planetA,
+            planetB,
+            aspect,
+            startDate,
+            endDate
+          );
+
+          if (exactDate) {
+            // Determine transit phase duration (typically 2-3 days for fast planets, longer for outer planets)
+            let durationDays = 2; // Default minimum
+
+            // Adjust duration based on planets involved
+            if (planetA === Planet.MOON || planetB === Planet.MOON) {
+              durationDays = 0.5; // Moon transits are shorter
+            } else if (
+              [
+                Planet.JUPITER,
+                Planet.SATURN,
+                Planet.URANUS,
+                Planet.NEPTUNE,
+                Planet.PLUTO,
+              ].includes(planetA) ||
+              [
+                Planet.JUPITER,
+                Planet.SATURN,
+                Planet.URANUS,
+                Planet.NEPTUNE,
+                Planet.PLUTO,
+              ].includes(planetB)
+            ) {
+              durationDays = 5; // Outer planet transits last longer
+            }
+
+            // Calculate start and end dates of the transit
+            const transitStart = new Date(exactDate);
+            transitStart.setHours(0, 0, 0, 0);
+            transitStart.setDate(
+              transitStart.getDate() - Math.floor(durationDays)
+            );
+
+            const transitEnd = new Date(exactDate);
+            transitEnd.setHours(23, 59, 59, 999);
+            transitEnd.setDate(transitEnd.getDate() + Math.ceil(durationDays));
+
+            // Generate transit description
+            const description = generateTransitDescription(
+              planetA,
+              aspect,
+              planetB
+            );
+
+            // Add transit to results
             transits.push({
               id: uuidv4(),
-              planetA,
-              planetB,
-              aspect,
-              exactDate,
-              startDate: aspectStartDate,
-              endDate: date,
-              description: generateTransitDescription(planetA, aspect, planetB)
+              planetA: planetA,
+              aspect: aspect,
+              planetB: planetB,
+              exactDate: exactDate,
+              startDate: transitStart,
+              endDate: transitEnd,
+              description: description,
             });
           }
         }
       }
     }
   }
-  
-  return transits;
-  */
+
+  // Sort transits by date
+  return transits.sort((a, b) => a.exactDate.getTime() - b.exactDate.getTime());
 }
 
-// Helper function to find the exact date of an aspect (commented out for now)
-/*
-function findExactAspectDate(
-  planetA: Planet,
-  planetB: Planet,
-  aspect: Aspect,
-  startDate: Date,
-  endDate: Date
-): Date {
-  // Binary search to find the exact date
-  // ...implementation would go here
-  
-  // For now, return the midpoint
-  return new Date((startDate.getTime() + endDate.getTime()) / 2);
+/**
+ * Get transits for the current date and surrounding days
+ */
+export function getCurrentTransits(
+  date: Date = new Date(),
+  dayRange: number = 3
+): Transit[] {
+  // Create date range
+  const startDate = new Date(date);
+  startDate.setDate(startDate.getDate() - dayRange);
+
+  const endDate = new Date(date);
+  endDate.setDate(endDate.getDate() + dayRange);
+
+  // Find transits in range
+  return findTransitsInRange(startDate, endDate);
 }
-*/
+
+/**
+ * Sample transit function (for development/testing)
+ */
+export function getSampleTransits(date: Date = new Date()): Transit[] {
+  // For development and testing, return a mix of real and sample transits
+  try {
+    // Try to get real transits first
+    const realTransits = getCurrentTransits(date, 5);
+
+    // If we have enough real transits, return them
+    if (realTransits.length >= 3) {
+      return realTransits;
+    }
+
+    // Otherwise, supplement with sample data
+    const sampleTransits: Transit[] = [
+      {
+        id: uuidv4(),
+        planetA: Planet.SUN,
+        aspect: Aspect.SQUARE,
+        planetB: Planet.MARS,
+        exactDate: new Date(date.getTime() + 1 * 24 * 60 * 60 * 1000),
+        startDate: new Date(date),
+        endDate: new Date(date.getTime() + 2 * 24 * 60 * 60 * 1000),
+        description:
+          "Sun square Mars brings energy and potential conflict. Channel this dynamic tension constructively.",
+      },
+      {
+        id: uuidv4(),
+        planetA: Planet.VENUS,
+        aspect: Aspect.TRINE,
+        planetB: Planet.JUPITER,
+        exactDate: new Date(date.getTime() - 1 * 24 * 60 * 60 * 1000),
+        startDate: new Date(date.getTime() - 3 * 24 * 60 * 60 * 1000),
+        endDate: new Date(date.getTime() + 1 * 24 * 60 * 60 * 1000),
+        description:
+          "Venus trine Jupiter brings harmony, optimism, and expansion to relationships and finances.",
+      },
+    ];
+
+    // Combine real and sample transits
+    return [...realTransits, ...sampleTransits].slice(0, 5); // Limit to 5 transits
+  } catch (error) {
+    console.error("Error calculating real transits:", error);
+
+    // Fallback to pure sample data if calculation fails
+    return [
+      {
+        id: uuidv4(),
+        planetA: Planet.MERCURY,
+        aspect: Aspect.CONJUNCTION,
+        planetB: Planet.VENUS,
+        exactDate: new Date(date),
+        startDate: new Date(date.getTime() - 1 * 24 * 60 * 60 * 1000),
+        endDate: new Date(date.getTime() + 1 * 24 * 60 * 60 * 1000),
+        description:
+          "Mercury conjunct Venus enhances communication in relationships and creative expression.",
+      },
+      {
+        id: uuidv4(),
+        planetA: Planet.MOON,
+        aspect: Aspect.OPPOSITION,
+        planetB: Planet.SATURN,
+        exactDate: new Date(date.getTime() + 2 * 24 * 60 * 60 * 1000),
+        startDate: new Date(date.getTime() + 1.5 * 24 * 60 * 60 * 1000),
+        endDate: new Date(date.getTime() + 2.5 * 24 * 60 * 60 * 1000),
+        description:
+          "Moon opposite Saturn may bring emotional challenges and a need for boundaries.",
+      },
+      {
+        id: uuidv4(),
+        planetA: Planet.SUN,
+        aspect: Aspect.TRINE,
+        planetB: Planet.JUPITER,
+        exactDate: new Date(date.getTime() + 3 * 24 * 60 * 60 * 1000),
+        startDate: new Date(date.getTime() + 1 * 24 * 60 * 60 * 1000),
+        endDate: new Date(date.getTime() + 5 * 24 * 60 * 60 * 1000),
+        description:
+          "Sun trine Jupiter brings optimism, growth opportunities, and expanded horizons.",
+      },
+    ];
+  }
+}
