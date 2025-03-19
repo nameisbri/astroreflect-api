@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { getPlanetPosition } from "../services/ephemeris/ephemerisService";
 import { getSampleTransits } from "../services/ephemeris/transitService";
+import { Planet } from "../models/types";
 
 export function getTransits(req: Request, res: Response): void {
   try {
@@ -22,17 +23,37 @@ export function getTransits(req: Request, res: Response): void {
 
 export function getPlanetPositionData(req: Request, res: Response): void {
   try {
-    const date = new Date((req.query.date as string) || new Date());
-    const planet = req.query.planet as string;
+    const dateParam = (req.query.date as string) || new Date().toISOString();
+    const planetParam = req.query.planet as string;
 
+    // Validate date
+    const date = new Date(dateParam);
     if (isNaN(date.getTime())) {
       res.status(400).json({ error: "Invalid date format" });
       return;
     }
 
-    const position = getPlanetPosition(planet as any, date);
+    // Validate planet
+    const planet = Object.values(Planet).find(
+      (p) => p.toLowerCase() === planetParam.toLowerCase()
+    );
+
+    if (!planet) {
+      res.status(400).json({
+        error: "Invalid planet",
+        validPlanets: Object.values(Planet),
+      });
+      return;
+    }
+
+    // Calculate position
+    const position = getPlanetPosition(planet, date);
     res.json({ position });
   } catch (error) {
-    res.status(500).json({ error: "Failed to get planet position" });
+    console.error("Planet position error:", error);
+    res.status(500).json({
+      error: "Failed to get planet position",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
   }
 }

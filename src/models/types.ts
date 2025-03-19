@@ -1,14 +1,14 @@
 export enum Planet {
-  SUN = "Sun",
-  MOON = "Moon",
-  MERCURY = "Mercury",
-  VENUS = "Venus",
-  MARS = "Mars",
-  JUPITER = "Jupiter",
-  SATURN = "Saturn",
-  URANUS = "Uranus",
-  NEPTUNE = "Neptune",
-  PLUTO = "Pluto",
+  SUN = "SUN",
+  MOON = "MOON",
+  MERCURY = "MERCURY",
+  VENUS = "VENUS",
+  MARS = "MARS",
+  JUPITER = "JUPITER",
+  SATURN = "SATURN",
+  URANUS = "URANUS",
+  NEPTUNE = "NEPTUNE",
+  PLUTO = "PLUTO",
 }
 
 export enum Aspect {
