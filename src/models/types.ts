@@ -66,6 +66,17 @@ export interface Transit {
   intensity?: number; // 0-100% measure of how strong the aspect is within its orb
 }
 
+export interface TransitType {
+  id: string;
+  planetA: Planet;
+  planetB?: Planet;
+  aspect?: Aspect;
+  sign?: ZodiacSign;
+  subtype: TransitSubtype;
+  name: string;
+  description: string;
+}
+
 export interface PlanetPosition {
   longitude: number;
   latitude: number;
@@ -76,6 +87,7 @@ export interface PlanetPosition {
 export interface JournalEntry {
   id: string;
   transitId: string;
+  transitTypeId?: string; // Added for cross-reference to transit types
   content: string;
   mood?: string;
   tags?: string[];
