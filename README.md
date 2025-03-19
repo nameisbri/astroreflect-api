@@ -477,3 +477,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - [Swiss Ephemeris](https://www.astro.com/swisseph/) for the astronomical calculation library
 - [Node.js Swiss Ephemeris bindings](https://github.com/hatijs/sweph) for the Node.js integration
+  git config pull.rebase true # rebase
