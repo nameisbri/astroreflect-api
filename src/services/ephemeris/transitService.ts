@@ -199,8 +199,8 @@ export function checkAspect(
   longitudeA: number,
   longitudeB: number,
   aspect: Aspect,
-  planetA: Planet,
-  planetB: Planet
+  planetA: Planet = Planet.SUN,
+  planetB: Planet = Planet.MOON
 ): boolean {
   const targetAngle = ASPECT_ANGLES[aspect];
   const orb = getAspectOrb(planetA, planetB, aspect);
@@ -1309,18 +1309,16 @@ export function findTransitsInRange(
   // Sort transits by timing and intensity
   return transits.sort((a, b) => {
     // Define timing order for sorting
-    const timingOrder = {
+    const timingOrder: Record<string, number> = {
       [TransitTiming.ACTIVE]: 0,
       [TransitTiming.APPLYING]: 1,
       [TransitTiming.SEPARATING]: 2,
       [TransitTiming.UPCOMING]: 3,
-      // Handle undefined timing (sort to end)
-      [undefined]: 4,
     };
 
     // First sort by timing category
-    const aTimingValue = timingOrder[a.timing] ?? 4;
-    const bTimingValue = timingOrder[b.timing] ?? 4;
+    const aTimingValue = a.timing ? timingOrder[a.timing] ?? 4 : 4;
+    const bTimingValue = b.timing ? timingOrder[b.timing] ?? 4 : 4;
 
     const timingDiff = aTimingValue - bTimingValue;
     if (timingDiff !== 0) return timingDiff;
