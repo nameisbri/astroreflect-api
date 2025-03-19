@@ -19,15 +19,51 @@ export enum Aspect {
   OPPOSITION = "Opposition",
 }
 
+export enum TransitSubtype {
+  STANDARD = "Standard",
+  RETROGRADE = "Retrograde",
+  DIRECT = "Direct",
+  STATION = "Station",
+  INGRESS = "Ingress",
+  TRANSIT = "Transit",
+}
+
+export enum ZodiacSign {
+  ARIES = "Aries",
+  TAURUS = "Taurus",
+  GEMINI = "Gemini",
+  CANCER = "Cancer",
+  LEO = "Leo",
+  VIRGO = "Virgo",
+  LIBRA = "Libra",
+  SCORPIO = "Scorpio",
+  SAGITTARIUS = "Sagittarius",
+  CAPRICORN = "Capricorn",
+  AQUARIUS = "Aquarius",
+  PISCES = "Pisces",
+}
+
+export enum TransitTiming {
+  ACTIVE = "Active", // Currently in effect
+  APPLYING = "Applying", // Building toward exactitude
+  SEPARATING = "Separating", // Moving away from exactitude
+  UPCOMING = "Upcoming", // Not yet active but approaching
+}
+
 export interface Transit {
   id: string;
+  transitTypeId: string;
   planetA: Planet;
-  aspect: Aspect;
-  planetB: Planet;
+  planetB?: Planet;
+  aspect?: Aspect;
+  sign?: ZodiacSign;
+  subtype: TransitSubtype;
   exactDate: Date;
   startDate: Date;
   endDate: Date;
-  description?: string;
+  description: string;
+  timing?: TransitTiming;
+  intensity?: number; // 0-100% measure of how strong the aspect is within its orb
 }
 
 export interface PlanetPosition {
