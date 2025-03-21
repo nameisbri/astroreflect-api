@@ -1,5 +1,9 @@
 import { Request, Response } from "express";
-import { getPlanetPosition } from "../services/ephemeris/ephemerisService";
+import {
+  getPlanetPosition,
+  getEnhancedPlanetPosition,
+} from "../services/ephemeris/ephemerisService";
+import { findTransitsInRange } from "../services/ephemeris/transitService";
 import { getSampleTransits } from "../services/ephemeris/transitService";
 import { Planet } from "../models/types";
 
@@ -53,6 +57,47 @@ export function getPlanetPositionData(req: Request, res: Response): void {
     console.error("Planet position error:", error);
     res.status(500).json({
       error: "Failed to get planet position",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+}
+
+// In ephemerisController.ts
+export function getDailySnapshot(req: Request, res: Response): void {
+  try {
+    const dateParam = (req.query.date as string) || new Date().toISOString();
+
+    // Validate date
+    const date = new Date(dateParam);
+    if (isNaN(date.getTime())) {
+      res.status(400).json({ error: "Invalid date format" });
+      return;
+    }
+
+    // Get planet positions with house info for all planets
+    const planets = Object.values(Planet);
+    const positions = planets.map((planet) =>
+      getEnhancedPlanetPosition(planet, date)
+    );
+
+    // Get transits for this day
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+
+    const transits = findTransitsInRange(startDate, endDate);
+
+    res.json({
+      date: date.toISOString(),
+      positions,
+      transits,
+    });
+  } catch (error) {
+    console.error("Daily snapshot error:", error);
+    res.status(500).json({
+      error: "Failed to get daily planetary snapshot",
       details: error instanceof Error ? error.message : "Unknown error",
     });
   }

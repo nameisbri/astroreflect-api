@@ -236,3 +236,90 @@ function getSignChallenges(sign: string, planet: Planet): string[] {
 function getSignOpportunities(sign: string, planet: Planet): string[] {
   return ["Personal transformation", "Creative expression", "Emotional growth"];
 }
+
+export interface EnhancedPlanetPosition extends PlanetPosition {
+  house: {
+    number: number;
+    cusp: number;
+    ruler: Planet;
+    entryDate: Date;
+    exitDate: Date;
+  };
+  signDuration: {
+    entryDate: Date;
+    exitDate: Date;
+  };
+}
+
+// In ephemerisService.ts
+export function getEnhancedPlanetPosition(
+  planet: Planet,
+  date: Date
+): EnhancedPlanetPosition {
+  // Get basic planet position
+  const position = getPlanetPosition(planet, date);
+
+  // Calculate house placement
+  const houseInfo = calculateHousePlacement(position.longitude, date);
+
+  // Calculate sign duration
+  const signDuration = calculateSignDuration(planet, position.sign.name, date);
+
+  return {
+    ...position,
+    house: houseInfo,
+    signDuration,
+  };
+}
+
+function calculateHousePlacement(longitude: number, date: Date) {
+  // Here we would implement house calculation logic
+  // This requires birth time and location for a fully accurate chart
+  // For a simplified version, we can use whole sign houses based on the Ascendant
+
+  // For now, return placeholder data
+  return {
+    number: Math.floor((longitude % 360) / 30) + 1,
+    cusp: Math.floor(longitude / 30) * 30,
+    ruler: getHouseRuler(Math.floor((longitude % 360) / 30) + 1),
+    entryDate: new Date(date.getTime() - 30 * 24 * 60 * 60 * 1000), // Placeholder
+    exitDate: new Date(date.getTime() + 30 * 24 * 60 * 60 * 1000), // Placeholder
+  };
+}
+
+function calculateSignDuration(planet: Planet, sign: string, date: Date) {
+  // Determine when the planet entered and will exit this sign
+  // This requires calculating the planet's position on multiple dates
+
+  // For now, return placeholder data
+  const entryDate = new Date(date.getTime() - 15 * 24 * 60 * 60 * 1000);
+  const exitDate = new Date(date.getTime() + 15 * 24 * 60 * 60 * 1000);
+
+  // For actual implementation, we would need to search backward and forward
+  // for the dates when the planet's position crosses sign boundaries
+
+  return {
+    entryDate,
+    exitDate,
+  };
+}
+
+function getHouseRuler(houseNumber: number): Planet {
+  // Traditional rulership assignments
+  const rulers = [
+    Planet.MARS, // 1st house - Aries
+    Planet.VENUS, // 2nd house - Taurus
+    Planet.MERCURY, // 3rd house - Gemini
+    Planet.MOON, // 4th house - Cancer
+    Planet.SUN, // 5th house - Leo
+    Planet.MERCURY, // 6th house - Virgo
+    Planet.VENUS, // 7th house - Libra
+    Planet.PLUTO, // 8th house - Scorpio
+    Planet.JUPITER, // 9th house - Sagittarius
+    Planet.SATURN, // 10th house - Capricorn
+    Planet.URANUS, // 11th house - Aquarius
+    Planet.NEPTUNE, // 12th house - Pisces
+  ];
+
+  return rulers[houseNumber - 1];
+}
